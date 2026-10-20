@@ -1,0 +1,64 @@
+node_modules/
+dist/
+.artifacts/
+*.log
+.DS_Store
+*.tsbuildinfo
+# packages/*/node_modules/
+packages/*/dist/
+packages/*/dist-chrome/
+packages/*/dist-firefox/
+packages/ai/src/providers/data/
+packages/ai/src/providers/.model-generation-*/
+*.cpuprofile
+
+# Environment
+.env
+
+# Editor files
+.vscode/
+.zed/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# Package specific
+.npm/
+coverage/
+.nyc_output/
+.pi_config/
+tui-debug.log
+compaction-results/
+.opencode/
+syntax.jsonl
+out.jsonl
+pi-*.html
+out.html
+packages/coding-agent/binaries/
+packages/env/bin/
+packages/env/daemon/target/
+todo.md
+plans/
+.pi/hf-sessions/
+.pi/hf-sessions-backup/
+collect.sh
+packages/agent/docs/extensions/pi-server-artifact/index.md
+
+# 投资助手：本地私密文件，不进仓库
+assistant/pi-agent/auth.json
+assistant/pi-agent/sessions/
+assistant/config/holdings.yaml
+assistant/data/*.db
+assistant/data/*.db-shm
+assistant/data/*.db-wal
+assistant/data/cache/
+assistant/data/runs/
+assistant/data/logs/
+assistant/data/reports/
+assistant/docs/PRD-投资助手3.0-v1.0.md
+assistant/docs/PRD-投资助手3.0-v1.0.html
+
+# Pi 上游 CI，本副本用不到，且推送需要 workflow 权限
+.github/workflows/

@@ -1,0 +1,874 @@
+import { type Context, type JsonValue, replicatedState } from "@earendil-works/chord";
+import { awaitWithContext, BACKGROUND_CONTEXT, withoutAbortSignal } from "@earendil-works/chord/context";
+import { type Op, track } from "@earendil-works/chord/delta";
+import {
+	type AnyDocToken,
+	checkRecordScope,
+	checkRecordVersion,
+	materializeDocument,
+	resolveAddress,
+} from "../documents.ts";
+import { SessionFailed, StorageRequestError } from "../errors.ts";
+import { idFromNumber } from "../ids.ts";
+import type {
+	CommitChange,
+	CommitPublication,
+	ConversationDocFamilyToken,
+	ConversationDocToken,
+	ConversationId,
+	ConversationQuery,
+	ConversationRecord,
+	Cursor,
+	DocumentAddress,
+	DocumentCommitChange,
+	DocumentId,
+	DocumentPoint,
+	DocumentQuery,
+	DocumentRecord,
+	DocumentState,
+	DocumentWatch,
+	EntryId,
+	EntryQuery,
+	EntryRecord,
+	Id,
+	JsonObject,
+	Page,
+	RewindableConversationDocFamilyToken,
+	RewindableConversationDocToken,
+	Seq,
+	Session,
+	SessionDocFamilyToken,
+	SessionDocToken,
+	SessionEnd,
+	Storage,
+	StorageWrite,
+	StoredDocument,
+	SubmissionId,
+	SubmissionQuery,
+	SubmissionRecord,
+	TaskDocFamilyToken,
+	TaskDocToken,
+	TaskId,
+	TaskQuery,
+	TaskRecord,
+	Tx,
+} from "../types.ts";
+import {
+	CommittedStateSource,
+	CommittedWatch,
+	type ObservedDocumentValue,
+	RETIREMENT_OPERATIONS,
+} from "./observation.ts";
+import { type LoadedDocument, Transaction, type TransactionHost, type TransactionScope } from "./transaction.ts";
+
+/**
+ * Open a Session kernel over one storage backend. `now` is the wall clock for task times; default `Date.now`. The first
+ * error a Storage method throws fails the Session (`SessionFailed`); see `SessionImpl`.
+ */
+export function createSession(storage: Storage, options?: { readonly now?: () => number }): Session {
+	return new SessionImpl(storage, options?.now);
+}
+
+/**
+ * Session kernel: one mutation line, the loaded document tracker cache, and committed publication.
+ *
+ * Only committed state is observable. Every commit callback, preparation, Storage settlement, adoption, and
+ * publication enqueue runs while the line is held; listeners run later.
+ *
+ * Storage failures are final. Every Storage call goes through one guard: the first error a Storage method throws, other
+ * than for a cancelled caller, fails the Session, as does a commit it cannot adopt. That call gets the error; every later
+ * call and every Storage call still underway gets `SessionFailed`; close listeners run at once with the error, and the
+ * Session then closes itself, Storage included, and `closed` settles. Nothing retries: transient errors are the
+ * Storage's to retry. Reopening recovers from what was committed.
+ */
+export class SessionImpl implements Session {
+	readonly #storage: Storage;
+	readonly #documents = new Map<string, LoadedDocument>();
+	readonly #commitListeners = new Set<(publication: CommitPublication, context: Context) => void>();
+	/** The Session's own listeners, such as its scheduler's: they keep memory in step with storage, so a throw fails it. */
+	readonly #internalListeners = new Set<(publication: CommitPublication, context: Context) => void>();
+	readonly #closeListeners = new Set<() => void>();
+	readonly #host: TransactionHost;
+	#tail: Promise<void> = Promise.resolve();
+	#closing: Promise<void> | undefined;
+	#failure: { readonly error: unknown } | undefined;
+	/** Set when close reaches the backend: calls that fail from then on fail because it closes. */
+	readonly #failed = Promise.withResolvers<never>();
+	readonly #closed = Promise.withResolvers<SessionEnd>();
+
+	get closed(): Promise<SessionEnd> {
+		return this.#closed.promise;
+	}
+
+	/** Internal: the error that failed the Session, if one did. */
+	get failure(): { readonly error: unknown } | undefined {
+		return this.#failure;
+	}
+
+	/** Internal: rejects with `SessionFailed` the moment the Session fails, before work underway has ended; never resolves. */
+	get failed(): Promise<never> {
+		return this.#failed.promise;
+	}
+
+	constructor(storage: Storage, now: () => number = Date.now) {
+		// Waits race it; none has to.
+		this.#failed.promise.catch(() => {});
+		this.#storage = new GuardedStorage(storage, this);
+		this.#host = {
+			storage: this.#storage,
+			now,
+			cached: (id) => this.#documents.get(id),
+			load: (definition, addressId, address, context) => this.#loadDocument(definition, addressId, address, context),
+			install: (document) => {
+				this.#documents.set(document.addressId, document);
+			},
+			evict: (id, recordId) => {
+				if (this.#documents.get(id)?.record.id === recordId) this.#documents.delete(id);
+			},
+			conversationCreated: (tx, record) => this.conversationCreated(tx, record),
+		};
+	}
+
+	/** The Storage behind the failure guard; every component reads and writes through it. */
+	protected get storage(): Storage {
+		return this.#storage;
+	}
+
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
+		return this.commitWith(change, context);
+	}
+
+	/**
+	 * Internal: fail the Session with `error`, the first wins, and report it once. Admission ends, and close listeners run
+	 * now; they read the error from `failure`. The Storage guard calls this; the Harness also calls it for a throw in its
+	 * scheduler's own commits.
+	 */
+	fail(error: unknown): void {
+		if (this.#failure !== undefined) return;
+		this.#failure = { error };
+		this.#failed.reject(new SessionFailed(error));
+		// Seal first, so a report handler that calls back finds the Session failed. Closing runs the close listeners
+		// synchronously; a failing backend close is the caller's to see, and here nobody waits.
+		this.close(BACKGROUND_CONTEXT).catch(() => {});
+		this.report(error);
+	}
+
+	/**
+	 * Internal commit exposing the concrete transaction and its internal operations, such as the reserved-ID root
+	 * bootstrap and task replacement. `scope` sets the default `tx.createTask()` conversation and the task attributed to
+	 * appended entries.
+	 */
+	commitWith<T>(change: (tx: Transaction) => T | Promise<T>, context: Context, scope?: TransactionScope): Promise<T> {
+		try {
+			this.assertUsable();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		return this.#enqueue(() => this.#runCommit(change, context, scope));
+	}
+
+	/** Internal: run a read-only job on the mutation line so multi-read derivations observe one committed state. */
+	readOnLine<T>(job: () => Promise<T>): Promise<T> {
+		try {
+			this.assertUsable();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		return this.#enqueue(async () => {
+			this.#assertHealthy();
+			return job();
+		});
+	}
+
+	/**
+	 * Internal: a conversation document's current incarnation and value, for a job already running on the line (see
+	 * `readOnLine()`). Absent documents are `undefined`.
+	 */
+	async conversationDocumentOnLine(
+		token: ConversationDocToken<JsonObject>,
+		conversationId: ConversationId,
+		context: Context,
+	): Promise<{ readonly record: DocumentRecord; readonly version: number; readonly value: JsonObject } | undefined> {
+		const definition = token.definition;
+		const resolved = resolveAddress(definition, [conversationId, context]);
+		const loaded = await this.#loadDocument(definition, resolved.id, resolved.address, context);
+		if (loaded === undefined) return undefined;
+		checkRecordScope(definition, loaded.record);
+		checkRecordVersion(definition, loaded.record, loaded.storedVersion);
+		return { record: loaded.record, version: loaded.valueVersion, value: loaded.tracker.value };
+	}
+
+	snapshot<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject>(
+		token: ConversationDocToken<T>,
+		conversationId: ConversationId,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject>(
+		token: TaskDocToken<T>,
+		taskId: TaskId,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: ConversationId,
+		key: string,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshot<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: TaskId,
+		key: string,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	async snapshot(token: AnyDocToken, ...args: readonly unknown[]): Promise<JsonObject | undefined> {
+		this.assertUsable();
+		const definition = token.definition;
+		const resolved = resolveAddress(definition, args);
+		const context = args[resolved.nextArgument] as Context;
+		const cached = this.#documents.get(resolved.id);
+		const loaded =
+			cached?.valueVersion === definition.version
+				? cached
+				: await this.#enqueue(async () => {
+						this.#assertHealthy();
+						return this.#loadDocument(definition, resolved.id, resolved.address, context);
+					});
+		if (loaded === undefined) return undefined;
+		checkRecordScope(definition, loaded.record);
+		checkRecordVersion(definition, loaded.record, loaded.storedVersion);
+		return loaded.tracker.value;
+	}
+
+	documentState<T extends JsonObject>(
+		token: SessionDocToken<T>,
+		context: Context,
+	): Promise<DocumentState<T> | undefined>;
+	documentState<T extends JsonObject>(
+		token: ConversationDocToken<T>,
+		conversationId: ConversationId,
+		context: Context,
+	): Promise<DocumentState<T> | undefined>;
+	documentState<T extends JsonObject>(
+		token: TaskDocToken<T>,
+		taskId: TaskId,
+		context: Context,
+	): Promise<DocumentState<T> | undefined>;
+	documentState<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		context: Context,
+	): Promise<DocumentState<T> | undefined>;
+	documentState<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: ConversationId,
+		key: string,
+		context: Context,
+	): Promise<DocumentState<T> | undefined>;
+	documentState<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: TaskId,
+		key: string,
+		context: Context,
+	): Promise<DocumentState<T> | undefined>;
+	documentState(token: AnyDocToken, ...args: readonly unknown[]): Promise<DocumentState<JsonObject> | undefined> {
+		try {
+			this.assertUsable();
+			const definition = token.definition;
+			const resolved = resolveAddress(definition, args);
+			const context = args[resolved.nextArgument] as Context;
+			return this.#enqueue(async () => {
+				this.#assertHealthy();
+				const loaded = await this.#loadDocument(definition, resolved.id, resolved.address, context);
+				if (loaded === undefined) return undefined;
+				const { observer: source, detach } = this.#attachDocument(
+					definition,
+					loaded,
+					(value, release) => new CommittedStateSource<ObservedDocumentValue>(value, release),
+				);
+				try {
+					return replicatedState(source, { onError: (error) => this.report(error) }) as DocumentState<JsonObject>;
+				} catch (error) {
+					detach();
+					throw error;
+				}
+			});
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	watchDoc<T extends JsonObject>(token: SessionDocToken<T>, context: Context): Promise<DocumentWatch<T> | undefined>;
+	watchDoc<T extends JsonObject>(
+		token: ConversationDocToken<T>,
+		conversationId: ConversationId,
+		context: Context,
+	): Promise<DocumentWatch<T> | undefined>;
+	watchDoc<T extends JsonObject>(
+		token: TaskDocToken<T>,
+		taskId: TaskId,
+		context: Context,
+	): Promise<DocumentWatch<T> | undefined>;
+	watchDoc<T extends JsonObject, I extends JsonValue>(
+		token: SessionDocFamilyToken<T, I>,
+		key: string,
+		context: Context,
+	): Promise<DocumentWatch<T> | undefined>;
+	watchDoc<T extends JsonObject, I extends JsonValue>(
+		token: ConversationDocFamilyToken<T, I>,
+		conversationId: ConversationId,
+		key: string,
+		context: Context,
+	): Promise<DocumentWatch<T> | undefined>;
+	watchDoc<T extends JsonObject, I extends JsonValue>(
+		token: TaskDocFamilyToken<T, I>,
+		taskId: TaskId,
+		key: string,
+		context: Context,
+	): Promise<DocumentWatch<T> | undefined>;
+	async watchDoc(token: AnyDocToken, ...args: readonly unknown[]): Promise<DocumentWatch<JsonObject> | undefined> {
+		this.assertUsable();
+		const definition = token.definition;
+		const resolved = resolveAddress(definition, args);
+		const context = args[resolved.nextArgument] as Context;
+		const signal = context.abortSignal;
+		let cancelled = signal?.aborted ?? false;
+		const markCancelled = (): void => {
+			cancelled = true;
+		};
+		signal?.addEventListener("abort", markCancelled, { once: true });
+		try {
+			const watch = await this.#enqueue(async () => {
+				this.#assertHealthy();
+				if (cancelled) throw cancellationError(signal!);
+				const loaded = await this.#loadDocument(definition, resolved.id, resolved.address, context);
+				if (cancelled) throw cancellationError(signal!);
+				if (loaded === undefined) return undefined;
+				return this.#attachDocument(
+					definition,
+					loaded,
+					(value, release) =>
+						new CommittedWatch<ObservedDocumentValue>(value, release, (error) => this.report(error)),
+				).observer;
+			});
+			if (watch === undefined) return undefined;
+			if (cancelled) {
+				watch.cancel();
+				throw cancellationError(signal!);
+			}
+			if (signal !== undefined) watch.observeCancellation(signal);
+			return watch as DocumentWatch<JsonObject>;
+		} finally {
+			signal?.removeEventListener("abort", markCancelled);
+		}
+	}
+
+	snapshotAsOf<T extends JsonObject>(
+		token: RewindableConversationDocToken<T>,
+		conversationId: ConversationId,
+		at: EntryId,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	snapshotAsOf<T extends JsonObject, I extends JsonValue>(
+		token: RewindableConversationDocFamilyToken<T, I>,
+		conversationId: ConversationId,
+		key: string,
+		at: EntryId,
+		context: Context,
+	): Promise<Readonly<T> | undefined>;
+	async snapshotAsOf(token: AnyDocToken, ...args: readonly unknown[]): Promise<JsonObject | undefined> {
+		this.assertUsable();
+		const definition = token.definition;
+		const resolved = resolveAddress(definition, args);
+		if (resolved.address.scope.kind !== "conversation") {
+			throw new TypeError("Session.snapshotAsOf() requires a conversation document");
+		}
+		const conversationId = resolved.address.scope.conversationId;
+		const atValue = args[resolved.nextArgument];
+		if (typeof atValue !== "number" || !Number.isSafeInteger(atValue)) {
+			throw new TypeError("Session.snapshotAsOf() requires an entry ID");
+		}
+		const at = idFromNumber<EntryId>(atValue);
+		const context = args[resolved.nextArgument + 1] as Context;
+		return this.#enqueue(async () => {
+			this.#assertHealthy();
+			const storedEntry = await this.#storage.entry(conversationId, at, context);
+			if (storedEntry === undefined) {
+				throw new Error(`Entry ${at} is not visible from conversation ${conversationId}`);
+			}
+			const address: DocumentAddress = {
+				...resolved.address,
+				scope: { kind: "conversation", conversationId: storedEntry.entry.conversationId },
+			};
+			const record = await this.#storage.findDocument(address, storedEntry.commitSeq, context);
+			if (record === undefined) return undefined;
+			const stored = await this.#storage.document(record.id, storedEntry.commitSeq, context);
+			if (stored === undefined) {
+				throw new Error(`Historical document ${record.id} (${record.kind}) cannot be read`);
+			}
+			return materializeDocument(definition, stored);
+		});
+	}
+
+	close(context: Context): Promise<void> {
+		if (this.#closing === undefined) {
+			const cleanup = withoutAbortSignal(context);
+			// Seal admission before anything else runs, then stop observers; admitted work settles before Storage closes.
+			this.#closing = Promise.resolve()
+				.then(() => this.beforeClose())
+				.then(() =>
+					this.#enqueue(async () => {
+						this.#commitListeners.clear();
+						this.#internalListeners.clear();
+						this.#documents.clear();
+						try {
+							await this.#storage.close(cleanup);
+						} catch (error) {
+							// A Storage that cannot close is a failed one; an earlier failure stays the cause.
+							if (this.#failure === undefined) {
+								this.#failure = { error };
+								this.report(error);
+							}
+							throw error;
+						}
+					}),
+				)
+				.finally(() => {
+					const failure = this.#failure;
+					this.#closed.resolve(
+						failure === undefined ? { reason: "closed" } : { reason: "failed", error: failure.error },
+					);
+				});
+			this.#notifyClose();
+		}
+		return awaitWithContext(this.#closing, context);
+	}
+
+	/** Run the close listeners once, each on its own: one that fails is reported, and the rest still run. */
+	#notifyClose(): void {
+		const listeners = [...this.#closeListeners];
+		this.#closeListeners.clear();
+		for (const listener of listeners) contained(listener, (error) => this.report(error));
+	}
+
+	/** Internal: the Session's failure, and errors of listeners, which never fail what ran them. A plain Session drops them. */
+	report(_error: unknown): void {}
+
+	/**
+	 * Runs inside every transaction that creates or forks a conversation, after the conversation record is staged. A
+	 * plain Session stages nothing; a Harness stages its built-in documents.
+	 */
+	protected conversationCreated(_tx: Transaction, _record: ConversationRecord): Promise<void> {
+		return Promise.resolve();
+	}
+
+	/** Runs after close seals admission and before the line closes Storage; must not reject. */
+	protected beforeClose(): Promise<void> {
+		return Promise.resolve();
+	}
+
+	/** Register a synchronous post-adoption listener. It must not block or call Session operations; a throw is reported. */
+	subscribeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void {
+		this.assertUsable();
+		this.#commitListeners.add(listener);
+		return () => this.#commitListeners.delete(listener);
+	}
+
+	/**
+	 * Internal: `subscribeCommits()` for the Session's own components, whose state follows each commit. A throw leaves
+	 * that state behind storage, so it fails the Session instead of being reported. They run before host listeners.
+	 */
+	observeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void {
+		this.assertUsable();
+		this.#internalListeners.add(listener);
+		return () => this.#internalListeners.delete(listener);
+	}
+
+	/**
+	 * Register a listener called synchronously when close begins, also when a failure closes the Session (`failure` is
+	 * then set). It must not block or call Session operations; a throw is reported.
+	 */
+	subscribeClose(listener: () => void): () => void {
+		this.assertUsable();
+		this.#closeListeners.add(listener);
+		return () => this.#closeListeners.delete(listener);
+	}
+
+	/** Drop every loaded tracker on the mutation line; later access cold-loads from Storage. */
+	unloadDocuments(): Promise<void> {
+		return this.#enqueue(async () => {
+			this.#documents.clear();
+		});
+	}
+
+	async #runCommit<T>(
+		change: (tx: Transaction) => T | Promise<T>,
+		context: Context,
+		scope?: TransactionScope,
+	): Promise<T> {
+		this.#assertHealthy();
+		context.abortSignal?.throwIfAborted();
+		const tx = new Transaction(this.#host, context, scope);
+		let result: T;
+		try {
+			result = await change(tx);
+			// A callback that caught a failed read must not commit, nor succeed as if it had.
+			this.#assertHealthy();
+		} catch (error) {
+			await tx.settleFailure();
+			throw error;
+		}
+		const writes = await tx.settleSuccess();
+		if (writes.length === 0) {
+			tx.discard();
+			return result;
+		}
+		let seq: Seq;
+		try {
+			// Once admitted, caller cancellation does not interrupt Storage settlement.
+			seq = await this.#storage.commit(writes, withoutAbortSignal(context));
+		} catch (error) {
+			// The guard has failed the Session.
+			tx.discard();
+			throw error;
+		}
+		let documents: DocumentCommitChange[];
+		try {
+			documents = tx.adopt(seq);
+		} catch (error) {
+			// Storage already committed; a failed adoption leaves memory behind durable state.
+			this.fail(error);
+			throw error;
+		}
+		this.#publish(seq, writes, documents, context);
+		return result;
+	}
+
+	#publish(
+		seq: Seq,
+		writes: readonly StorageWrite[],
+		documents: readonly DocumentCommitChange[],
+		context: Context,
+	): void {
+		if (this.#commitListeners.size === 0 && this.#internalListeners.size === 0) return;
+		const changes: CommitChange[] = [];
+		for (const write of writes) {
+			switch (write.type) {
+				case "conversation":
+				case "entry":
+				case "task":
+				case "submission":
+					changes.push(write);
+			}
+		}
+		for (const document of documents) changes.push(document);
+		const publication: CommitPublication = { seq, changes };
+		// The commit is durable: a failing listener neither fails the commit nor skips the others.
+		for (const listener of [...this.#internalListeners]) {
+			contained(
+				() => listener(publication, context),
+				(error) => this.fail(error),
+			);
+		}
+		for (const listener of [...this.#commitListeners]) {
+			contained(
+				() => listener(publication, context),
+				(error) => this.report(error),
+			);
+		}
+	}
+
+	/**
+	 * Attach an observer to one committed incarnation: check the definition, then forward this incarnation's committed
+	 * changes and close. `detach` removes both subscriptions.
+	 */
+	#attachDocument<O extends CommittedStateSource | CommittedWatch>(
+		definition: AnyDocToken["definition"],
+		loaded: LoadedDocument,
+		create: (value: JsonObject, detach: () => void) => O,
+	): { observer: O; detach: () => void } {
+		checkRecordScope(definition, loaded.record);
+		checkRecordVersion(definition, loaded.record, loaded.storedVersion);
+		let unsubscribeCommit = (): void => {};
+		let unsubscribeClose = (): void => {};
+		const detach = (): void => {
+			unsubscribeCommit();
+			unsubscribeClose();
+		};
+		const observer = create(loaded.tracker.value, detach);
+		const observed = { version: loaded.valueVersion };
+		unsubscribeCommit = this.observeCommits((publication, context) => {
+			for (const change of publication.changes) {
+				if (change.type !== "document" || change.record.id !== loaded.record.id) continue;
+				// A document state's frames carry no caller cancellation; a watch observes its own cancellation.
+				const frameContext = observer instanceof CommittedStateSource ? withoutAbortSignal(context) : context;
+				const ops = observedOperations(observed, change);
+				// A migration-only base changes nothing for an observer of the new version.
+				if (ops.length === 0) continue;
+				observer.advance(change.value, ops, frameContext);
+			}
+		});
+		unsubscribeClose = this.subscribeClose(() => observer.closeSession(this.#failure));
+		return { observer, detach };
+	}
+
+	async #loadDocument(
+		definition: AnyDocToken["definition"],
+		addressId: string,
+		address: DocumentAddress,
+		context: Context,
+	): Promise<LoadedDocument | undefined> {
+		const cached = this.#documents.get(addressId);
+		// A tracker serves only tokens of the version its value was materialized for; others reload from Storage.
+		if (cached?.valueVersion === definition.version) return cached;
+		if (cached !== undefined) this.#documents.delete(addressId);
+		const record = await this.#storage.findDocument(address, "current", context);
+		if (record === undefined) return undefined;
+		const stored = await this.#storage.document(record.id, "current", context);
+		if (stored === undefined) throw new Error(`Current document ${record.id} (${record.kind}) cannot be read`);
+		const value = materializeDocument(definition, stored);
+		const loaded: LoadedDocument = {
+			addressId,
+			record: stored.record,
+			storedVersion: stored.version,
+			valueVersion: definition.version,
+			deltasSinceBase: stored.deltasSinceBase,
+			tracker: track(value),
+		};
+		this.#documents.set(addressId, loaded);
+		return loaded;
+	}
+
+	#enqueue<T>(job: () => Promise<T>): Promise<T> {
+		const run = this.#tail.then(job);
+		this.#tail = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+
+	/** Internal: throw `SessionFailed` when failed, else an error when closing. */
+	assertUsable(): void {
+		this.#assertHealthy();
+		if (this.#closing !== undefined) throw new Error("Session is closed");
+	}
+
+	#assertHealthy(): void {
+		if (this.#failure !== undefined) throw new SessionFailed(this.#failure.error);
+	}
+}
+
+/**
+ * Run a host callback that must not fail its caller: a throw, or a promise it returns that rejects, goes to `onError`,
+ * which is not awaited.
+ */
+export function contained(callback: () => unknown, onError: (error: unknown) => void): void {
+	try {
+		const result = callback();
+		// Any thenable, also a promise from another realm; `Promise.resolve` adopts it with handlers of its own.
+		if (typeof (result as { then?: unknown } | null)?.then === "function") Promise.resolve(result).catch(onError);
+	} catch (error) {
+		onError(error);
+	}
+}
+
+/**
+ * Operations an observer applies for one committed change. An observer hydrated under another definition version holds
+ * a differently shaped value, so it receives the new value as a root replacement instead of operations for that shape.
+ */
+function observedOperations(
+	observed: { version: number },
+	change: Extract<DocumentCommitChange, { readonly type: "document" }>,
+): readonly Op[] {
+	if (change.value === null) return RETIREMENT_OPERATIONS;
+	if (change.version === observed.version) return change.ops;
+	observed.version = change.version!;
+	return [["r", change.value]];
+}
+
+function cancellationError(signal: AbortSignal): Error {
+	return signal.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted", "AbortError");
+}
+
+/** What the guard needs of its Session: the failure so far, and how to fail it. */
+type FailureLatch = {
+	readonly failure: { readonly error: unknown } | undefined;
+	fail(error: unknown): void;
+};
+
+/**
+ * The Session's Storage behind its failure guard; every component of the Session reads and writes through it. Before a
+ * call, a failed Session gets `SessionFailed` without reaching the backend. A call that throws fails the Session and
+ * rethrows the backend's error, unless it is a `StorageRequestError` or a read whose caller's context was aborted:
+ * neither says the Storage is broken.
+ * `close()` always reaches the backend, so a failed Session still closes it.
+ */
+class GuardedStorage implements Storage {
+	readonly #storage: Storage;
+	readonly #latch: FailureLatch;
+	/** Backend calls underway, also those off the Session line, which close waits for before it closes the backend. */
+	readonly #underway = new Set<Promise<unknown>>();
+	#closing = false;
+
+	constructor(storage: Storage, latch: FailureLatch) {
+		this.#storage = storage;
+		this.#latch = latch;
+	}
+
+	/** Never exempt, whatever it throws: once admitted, whether a failed batch committed is unknown. */
+	commit(writes: readonly StorageWrite[], context: Context): Promise<Seq> {
+		return this.#call(undefined, () => this.#storage.commit(writes, context));
+	}
+
+	mintId<I extends Id<string>>(): Promise<I> {
+		return this.#call(undefined, () => this.#storage.mintId<I>());
+	}
+
+	conversation(id: ConversationId, context: Context): Promise<ConversationRecord | undefined> {
+		return this.#call(context, () => this.#storage.conversation(id, context));
+	}
+
+	scanConversations(
+		query: ConversationQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		context: Context,
+	): Promise<Page<ConversationRecord, Cursor>> {
+		return this.#call(context, () => this.#storage.scanConversations(query, limit, cursor, context));
+	}
+
+	entry(id: EntryId, context: Context): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(
+		conversationId: ConversationId,
+		id: EntryId,
+		context: Context,
+	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined>;
+	entry(
+		first: EntryId | ConversationId,
+		second: EntryId | Context,
+		third?: Context,
+	): Promise<{ readonly entry: EntryRecord; readonly commitSeq: Seq } | undefined> {
+		if (third === undefined) {
+			const context = second as Context;
+			return this.#call(context, () => this.#storage.entry(first as EntryId, context));
+		}
+		return this.#call(third, () => this.#storage.entry(first as ConversationId, second as EntryId, third));
+	}
+
+	findLatestHeadMarker(
+		conversationId: ConversationId,
+		atOrBeforeEntryId: EntryId | undefined,
+		context: Context,
+	): Promise<(EntryRecord & { readonly head: EntryId }) | undefined> {
+		return this.#call(context, () => this.#storage.findLatestHeadMarker(conversationId, atOrBeforeEntryId, context));
+	}
+
+	scanEntries(
+		query: EntryQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		context: Context,
+	): Promise<Page<EntryRecord, Cursor>> {
+		return this.#call(context, () => this.#storage.scanEntries(query, limit, cursor, context));
+	}
+
+	task(id: TaskId, context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue> | undefined> {
+		return this.#call(context, () => this.#storage.task(id, context));
+	}
+
+	scanTasks(
+		query: TaskQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		context: Context,
+	): Promise<Page<TaskRecord<JsonValue, JsonValue, JsonValue>, Cursor>> {
+		return this.#call(context, () => this.#storage.scanTasks(query, limit, cursor, context));
+	}
+
+	submission(id: SubmissionId, context: Context): Promise<SubmissionRecord | undefined> {
+		return this.#call(context, () => this.#storage.submission(id, context));
+	}
+
+	scanSubmissions(
+		query: SubmissionQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		context: Context,
+	): Promise<Page<SubmissionRecord, Cursor>> {
+		return this.#call(context, () => this.#storage.scanSubmissions(query, limit, cursor, context));
+	}
+
+	submissionByRequest(
+		conversationId: ConversationId,
+		requestId: string,
+		context: Context,
+	): Promise<SubmissionRecord | undefined> {
+		return this.#call(context, () => this.#storage.submissionByRequest(conversationId, requestId, context));
+	}
+
+	findDocument(address: DocumentAddress, at: DocumentPoint, context: Context): Promise<DocumentRecord | undefined> {
+		return this.#call(context, () => this.#storage.findDocument(address, at, context));
+	}
+
+	document(id: DocumentId, at: DocumentPoint, context: Context): Promise<StoredDocument | undefined> {
+		return this.#call(context, () => this.#storage.document(id, at, context));
+	}
+
+	scanDocuments(
+		query: DocumentQuery,
+		limit: number,
+		cursor: Cursor | undefined,
+		context: Context,
+	): Promise<Page<DocumentRecord, Cursor>> {
+		return this.#call(context, () => this.#storage.scanDocuments(query, limit, cursor, context));
+	}
+
+	/**
+	 * Close the backend once every call underway has settled, so none outlives it or fails after `closed` settles. New
+	 * calls are refused from here on: a paged read must not start its next page while the backend closes.
+	 */
+	async close(context: Context): Promise<void> {
+		this.#closing = true;
+		await Promise.allSettled([...this.#underway]);
+		return this.#storage.close(context);
+	}
+
+	/**
+	 * Run one backend call under the guard. `read` is a read's context; `commit()` and `mintId()` pass none, so nothing
+	 * exempts their errors: once a batch is admitted, whether it committed is unknown. A call still underway when another
+	 * fails the Session ends with `SessionFailed` too, whatever it returns: nothing it read or wrote is used.
+	 */
+	async #call<T>(read: Context | undefined, run: () => Promise<T>): Promise<T> {
+		this.#assertHealthy();
+		if (this.#closing) throw new Error("Session is closed");
+		let result: T;
+		// An async wrapper, so a backend that throws synchronously is guarded too.
+		const call = (async () => run())();
+		this.#underway.add(call);
+		try {
+			result = await call;
+		} catch (error) {
+			this.#assertHealthy();
+			// An invalid read, or one its caller cancelled, says nothing about the Storage; it fails that call only.
+			const exempt =
+				read !== undefined && (error instanceof StorageRequestError || read.abortSignal?.aborted === true);
+			if (!exempt) this.#latch.fail(error);
+			throw error;
+		} finally {
+			this.#underway.delete(call);
+		}
+		this.#assertHealthy();
+		return result;
+	}
+
+	#assertHealthy(): void {
+		const failure = this.#latch.failure;
+		if (failure !== undefined) throw new SessionFailed(failure.error);
+	}
+}

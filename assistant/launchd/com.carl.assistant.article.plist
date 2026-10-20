@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.carl.assistant.article</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/changsir/Desktop/投资助手3.0/assistant/py &amp;&amp; NO_PROXY=csindex.com.cn,sina.com.cn,eastmoney.com /Users/changsir/ic_backtest/.venv/bin/python news.py article &gt;&gt; /Users/changsir/Desktop/投资助手3.0/assistant/data/logs/article.log 2&gt;&amp;1</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
+  <key>RunAtLoad</key><false/>
+</dict></plist>

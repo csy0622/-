@@ -1,0 +1,300 @@
+# ============================================================
+# 投资助手 3.0 — 标的清单（唯一事实来源）
+# ============================================================
+# 数据抓取、基线拟合、日报(d)块、异动关联、贝塔计算、回测标的 全部以此为准。
+# 改这里 = 改全链路覆盖范围，不需要改代码。
+#
+# 所有 first 字段均为 2026-10-10 用 akshare 1.18.88 实测所得，不是估算。
+# ============================================================
+
+version: 2
+updated: "2026-10-10"
+
+# ------------------------------------------------------------
+# 股指期货（中金所历史行情，IC/IF 同源）
+# ------------------------------------------------------------
+futures:
+  - code: IC
+    name: 中证500股指期货
+    exchange: CFFEX
+    multiplier: 200              # 元/点
+    underlying: "000905"
+    listed: "2015-04-16"
+    note: 已有 11 年全合约日线（ic_backtest/data/raw/cffex_ic_daily.parquet）
+
+  - code: IF
+    name: 沪深300股指期货
+    exchange: CFFEX
+    multiplier: 300              # 元/点（与 IC 的 200 不同）
+    underlying: "000300"
+    listed: "2010-04-16"
+    note: 与 IC 同一个 zip 源，内含 IC/IF/IH/IM；2010-06 起已确认可抓
+
+# ------------------------------------------------------------
+# ETF 观察清单（用于日报(d)块基线偏离 + 板块异动 + 回测 + 贝塔）
+# ------------------------------------------------------------
+# 口径（2026-10-10 定）：**用真实 ETF，有多久数据用多久**，不强行凑 10 年。
+# 长周期板块回测改用下面的指数。
+etf:
+  - sector: 银行
+    code: "512800"
+    name: 华宝中证银行ETF
+    track_index: "399986"
+    listed: "2017-08-03"
+    years: 9.2
+
+  - sector: 券商
+    code: "512880"
+    name: 国泰中证全指证券公司ETF（证券ETF）
+    track_index: "399975"
+    listed: "2016-08-08"
+    years: 10.2
+    alternative: "512000 华宝券商ETF（同指数）"
+
+  - sector: 家电（白色家电）
+    code: "159996"
+    name: 国泰中证全指家用电器ETF
+    track_index: "930697"
+    listed: "2020-03-16"
+    years: 6.6
+    note: 市场无纯「白色家电ETF」，此只含白电 + 小家电 + 厨电
+
+  - sector: 光伏
+    code: "159857"
+    name: 天弘中证光伏产业ETF
+    track_index: "931151"
+    listed: "2021-02-24"
+    years: 5.6
+    alternative: "515790 华泰柏瑞光伏ETF（规模更大）"
+
+  - sector: 稀土
+    code: "159713"
+    name: 富国中证稀土产业ETF
+    track_index: "930632"
+    listed: "2021-08-16"
+    years: 5.1
+
+  - sector: 机器人
+    code: "562500"
+    name: 华夏中证机器人ETF
+    track_index: "H30590"
+    listed: "2021-12-29"
+    years: 4.8
+    alternative: "159770 天弘中证机器人ETF（同指数）"
+
+  - sector: 光模块（通信设备代理）
+    code: "515880"
+    name: 国泰中证全指通信设备ETF（通信ETF）
+    track_index: "931160"
+    listed: "2019-09-06"
+    years: 7.1
+    alternative: "515050 华夏5G ETF"
+    note: >-
+      市场没有名为「光模块ETF」的产品。515880 中际旭创为核心重仓、光模块权重超 50%，
+      市场普遍以此作为光模块方向的 ETF 代理。日后若新发专门产品，替换此条即可。
+
+  - sector: 电池
+    code: "159755"
+    name: 广发国证新能源车电池ETF（电池ETF）
+    track_index: "980032"
+    listed: "2021-06-24"
+    years: 5.3
+    alternative: "159840 工银锂电池ETF（同指数）、561910 招商电池ETF（中证电池主题）"
+
+# ------------------------------------------------------------
+# 指数（板块标尺 + 长历史回测 + 贝塔基准）
+# ------------------------------------------------------------
+# 取数口径（三选一，按顺序回退）：
+#   csindex = stock_zh_index_hist_csindex（中证指数公司，中证系/H 类用这个）
+#   sina    = stock_zh_index_daily（新浪）
+#   em      = stock_zh_index_daily_em（东方财富）
+# 坑 1：csindex 返回的**首行是 base-date 合成行**（如 2004-01-01，收盘值与次行相同），
+#       直接 min(date) 会把起点误判成 2004 年 —— 必须丢弃首行。
+# 坑 2：东财行情接口（push2his / fund_etf_hist_em）本机**间歇性拒连**，必须多源回退。
+indices:
+  benchmarks:
+    - { code: "sh000300", name: 沪深300, source: sina, first: "2002-01-04", years: 24.0 }
+    - { code: "sh000905", name: 中证500, source: sina, first: "2005-01-04", years: 21.8 }
+
+  sectors:
+    - sector: 银行
+      etf: "512800"
+      code: "399986"
+      name: 中证银行
+      source: csindex
+      first: "2005-01-04"
+      etf_index_corr: 0.720        # 偏低，疑为 ETF 未复权分红缺口，需复权复算
+    - sector: 券商
+      etf: "512880"
+      code: "399975"
+      name: 中证全指证券公司
+      source: csindex
+      first: "2007-07-02"
+      etf_index_corr: 0.994        # 已确认配对
+    - sector: 家电
+      etf: "159996"
+      code: "930697"
+      name: 中证全指家用电器
+      source: csindex
+      first: "2005-01-04"
+      etf_index_corr: 0.986
+    - sector: 光伏
+      etf: "159857"
+      code: "931151"
+      name: 中证光伏产业
+      source: csindex
+      first: "2012-12-31"
+      etf_index_corr: 0.993
+    - sector: 稀土
+      etf: "159713"
+      code: "930632"
+      name: 中证稀土产业
+      source: csindex
+      first: "2012-01-04"
+      etf_index_corr: 0.900
+    - sector: 机器人
+      etf: "562500"
+      code: "H30590"
+      name: 中证机器人指数
+      source: csindex
+      first: "2011-01-04"
+      etf_index_corr: 0.986        # 相关性反查确认；候选 932036 相关系数 -0.17，已排除
+      note: H 类代码；该指数有 15.8 年历史，可完全覆盖 ETF 的 4.8 年
+    - sector: 光模块（通信设备）
+      etf: "515880"
+      code: "931160"
+      name: 中证全指通信设备
+      source: csindex
+      first: "2018-12-28"
+      etf_index_corr: 0.745        # 存疑：代码由公开资料确认无误，低相关疑为 ETF 未复权/份额折算
+    - sector: 电池
+      etf: "159755"
+      code: "980032"
+      name: 国证新能源车电池
+      source: sina                 # 仅 sina 口径可取；csindex / em 均失败
+      first: "2013-01-04"
+      etf_index_corr: 0.992
+
+# ------------------------------------------------------------
+# 贝塔系数
+# ------------------------------------------------------------
+# ------------------------------------------------------------
+# 基线（每个标的各自一条冻结线性线）
+# ------------------------------------------------------------
+# 口径（沿用《IC_增长拟合与对照分析》与 ic_backtest/configs/settings.yaml）：
+#   点位 ≈ value_at_base + slope × (年份小数 − base_year)
+# 参数在设计时写死、**不随新数据重拟合** —— 因此是时间的常函数，不含逐日前视。
+# slope 与 r2 由首次拟合产出后冻结；r2 用于在日报中如实说明拟合质量。
+# 2026-10-11 定：ETF 基线与指数基线**都要** ——
+#   ETF 基线答「我买的这只贵不贵」，指数基线答「这个板块贵不贵」（指数历史更长，更稳）。
+baseline:
+  base_year: 2014
+  risk_zone_pct: 0.20            # 高于基线该比例，视为进入高风险区间
+  fit_on: 年末收盘               # 拟合输入；后续可增加「日线收盘」口径做对照
+
+  # 期指与宽基（基线挂在标的指数上，见技术方案决策 H）
+  items:
+    - { code: "000905", name: 中证500,         value_at_base: 5660.0, slope: 73.0, r2: 0.06, status: 已冻结（来自既有分析） }
+    - { code: "IC",     name: 中证500股指期货,  value_at_base: 5660.0, slope: 73.0, r2: 0.06, status: 已冻结（同其标的 000905） }
+    - { code: "000300", name: 沪深300,         value_at_base: 3123.26, slope: 122.9132, r2: 0.421, status: 已冻结（2026-10-12 实测拟合） }
+
+  # ETF 口径基线（用真实 ETF，有多久算多久）
+  etf_items:
+    - { code: "512800", name: 银行ETF,   value_at_base: 0.63, slope: 0.0678, r2: 0.608, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "512880", name: 券商ETF,   value_at_base: 0.87, slope: 0.0213, r2: 0.146, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "159996", name: 家电ETF,   value_at_base: 0.98, slope: 0.0306, r2: 0.076, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "159857", name: 光伏ETF,   value_at_base: 2.68, slope: -0.1727, r2: 0.71, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "159713", name: 稀土ETF,   value_at_base: 0.44, slope: 0.0474, r2: 0.077, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "562500", name: 机器人ETF, value_at_base: 0.71, slope: 0.0136, r2: 0.02, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "515880", name: 通信ETF,   value_at_base: -0.75, slope: 0.235, r2: 0.43, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "159755", name: 电池ETF,   value_at_base: 1.51, slope: -0.0619, r2: 0.125, status: 已冻结（2026-10-12 实测拟合） }
+
+  # 指数口径基线（长历史对照）
+  index_items:
+    - { code: "399986", name: 中证银行,         value_at_base: 4872.24, slope: 186.5016, r2: 0.468, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "399975", name: 中证全指证券公司,  value_at_base: 873.3, slope: -12.82, r2: 0.054, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "930697", name: 中证全指家用电器,  value_at_base: 5513.28, slope: 584.5189, r2: 0.855, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "931151", name: 中证光伏产业,     value_at_base: 1519.31, slope: 171.3524, r2: 0.353, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "930632", name: 中证稀土产业,     value_at_base: 1028.81, slope: 90.4386, r2: 0.411, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "H30590", name: 中证机器人指数,   value_at_base: 983.39, slope: 66.02, r2: 0.455, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "931160", name: 中证全指通信设备,  value_at_base: -1429.72, slope: 954.7595, r2: 0.411, status: 已冻结（2026-10-12 实测拟合） }
+    - { code: "980032", name: 国证新能源车电池,  value_at_base: 3451.47, slope: 932.7654, r2: 0.536, status: 已冻结（2026-10-12 实测拟合） }
+
+# ------------------------------------------------------------
+# 额外关注标的（2026-10-13 由持仓与"曾持有"清单推出）
+# ------------------------------------------------------------
+# 他点名要关注：光伏、光模块(通信)、机器人、黄金、电池、稀土。
+# 前五个已被上面 etf 清单覆盖，**只有黄金没有**；另补两条他实际交易过的板块 ETF。
+# 个股**不纳入**——他明确说"持有的个股可认为是银行ETF/通信ETF/白色家电ETF的衍生，按 ETF 即可"，
+# 所以口径维持「个股不做」，个股只在 holdings.yaml 的 proxy_map 里做映射。
+watch_extra:
+  etf:
+    - { code: "518880", name: 黄金ETF华安,     sector: 黄金 , value_at_base: 0.51, slope: 0.15712698720036375, r2: 0.689, status: 已冻结（2026-10-13 实测拟合，年末收盘，13 点） }
+    - { code: "512400", name: 有色金属ETF南方, sector: 有色金属 , value_at_base: 0.29, slope: 0.09626037157184089, r2: 0.438, status: 已冻结（2026-10-13 实测拟合，年末收盘，9 点） }
+    - { code: "162411", name: 华宝油气LOF,     sector: 油气 , value_at_base: 0.79, slope: -0.02219943970257476, r2: 0.189, status: 已冻结（2026-10-13 实测拟合，年末收盘，15 点） }
+    - { code: "561160", name: 电池ETF富国,     sector: 电池 , value_at_base: 0.29, slope: 0.033281163858726696, r2: 0.061, status: 已冻结（2026-10-13 实测拟合，年末收盘，4 点） }
+
+beta:
+  benchmark: 中证500               # 2026-10-11 定：只认中证500
+  windows: [全历史, 近250日]
+  price_basis: nav                 # 净值/累计净值口径（东财行情接口被网络层重置，见技术方案 2.3）
+  scope: 只有 ETF 出贝塔；IC/IF 不出（2026-10-11 定）
+  # 样本值（2026-10-10 实测，未复权行情口径，仅作形态参考）
+  sample_beta_vs_zz500:
+    银行ETF: 0.27
+    家电ETF: 0.70
+    券商ETF: 0.94
+    光伏ETF: 1.10
+    稀土ETF: 1.15
+    机器人ETF: 1.10
+    通信ETF: 1.19
+    电池ETF: 1.10
+
+# ------------------------------------------------------------
+# 模型
+# ------------------------------------------------------------
+models:
+  default:
+    provider: deepseek
+    id: deepseek-flash        # 2026-10-11 实测：API 返回的 id 就是 deepseek-flash（显示名 DeepSeek-V4.1-Flash）
+    input: [text, image]      # 实测支持图片，已用日报截图验证可读出表格细节
+    context_window: 1048576
+    max_output_tokens: 393216
+    register_via: assistant/pi-agent/models.json   # 已在 <agent-dir>/models.json 注册
+  text_only:
+    provider: deepseek
+    id: deepseek-v4-pro       # 纯文本，input_modalities 只有 text
+  # 结论：主模型本身支持图片，**不需要单独注册一个视觉模型**，复盘读图不需要切模型。
+
+# ------------------------------------------------------------
+# 板块异动扫描口径（日报 b 块 / M6）
+# ------------------------------------------------------------
+# 口径可切换：sw1（申万一级 31 个，默认）/ em（东财行业板块）/ etf（仅清单内 ETF 的跟踪指数）
+# 实测：申万一级 28/31 个 ≥12.6 年；石油石化/环保/美容护理 3 个仅 4.8 年（2021-12 才拆出）
+sectors:
+  mode: sw1
+  threshold_pct: 2.0            # 涨跌幅绝对值超过该值算异动
+  data_cutoff: prev_close       # 09:00 生成日报，故异动/要闻/偏离均取上一交易日收盘
+  source: 申万宏源行业指数        # 经 akshare index_hist_sw，symbol 用裸代码（801010，不能带 .SI）
+  new_since_2021: ["801960 石油石化", "801970 环保", "801980 美容护理"]
+
+# ------------------------------------------------------------
+# 日报与调度
+# ------------------------------------------------------------
+report:
+  daily:
+    generate_at: "09:00"
+    theme: light                # 白色系
+    sections: [article, news_moves, opportunities, baseline]   # a / b / c / d
+    push_feishu: false          # 2026-10-11 定：不推飞书，只在电脑上看本地 HTML
+  article_fetch_at: "11:30"     # 猫笔刀抓取时点
+
+# ------------------------------------------------------------
+# 文章源
+# ------------------------------------------------------------
+articles:
+  - channel: 微信公众号
+    account: 猫笔刀
+    fetch_via: 浏览器登录态（mp.weixin.qq.com）
+    schedule: 每日 11:30
+    dedupe_key: 发布日期 + 标题

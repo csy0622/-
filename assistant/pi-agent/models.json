@@ -1,0 +1,29 @@
+{
+  "providers": {
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com",
+      "api": "openai-completions",
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "DeepSeek-V4.1-Flash（支持图片）",
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "reasoning": true,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "name": "DeepSeek-V4-Pro（纯文本）",
+          "input": ["text"],
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "reasoning": true,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>投资助手 3.0 · UI 演示</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --bd:#e3e6ea; --grid:#eceff2;
+  --pri:#2f6fd6; --risk:#e0415b; --pos:#2ca02c; --amber:#d98a12;
+  --t1:#222; --t2:#666; --t3:#999; --axis:#9aa5b1;
+  --soft:#f7f9fb; --softbd:#e6eaef; --th:#f0f3f7;
+  --tag:#eef2f8; --tagr:#fdecef; --tagg:#eaf6ec; --taga:#fdf3e2;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t1);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:13px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px}
+header.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.brand{font-size:17px;font-weight:700;letter-spacing:.2px}
+.brand small{font-weight:400;color:var(--t3);font-size:12px;margin-left:6px}
+.demo{margin-left:auto;font-size:11px;color:var(--amber);background:var(--taga);
+  border:1px solid #f0dcb0;border-radius:6px;padding:3px 8px;white-space:nowrap}
+.sub{color:var(--t2);font-size:12.5px;line-height:1.7;margin:0 0 14px}
+.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:13px;padding:8px 16px;border-radius:9px;cursor:pointer;
+  background:#fff;border:1px solid var(--bd);color:#445}
+.tabs button.on{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600}
+.view{display:none}.view.on{display:block}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);margin-bottom:16px}
+.card h2{font-size:14.5px;margin:0 0 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card h2 .bdg{font-size:11px;font-weight:400;color:var(--t3)}
+.note{font-size:12px;color:#333;line-height:1.8;background:#fff8e6;border:1px solid #f0e0a8;
+  border-radius:8px;padding:10px 12px;margin:0 0 14px}
+.note.warn{background:var(--tagr);border-color:#f3c3cb}
+.tag{font-size:11px;padding:2px 7px;border-radius:5px;background:var(--tag);color:var(--pri);white-space:nowrap}
+.tag.r{background:var(--tagr);color:var(--risk)}
+.tag.g{background:var(--tagg);color:var(--pos)}
+.tag.a{background:var(--taga);color:var(--amber)}
+.tag.n{background:#f2f4f7;color:var(--t2)}
+table{border-collapse:collapse;font-size:12.5px;width:100%}
+td,th{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--th);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.red{color:var(--risk)}.green{color:var(--pos)}.amber{color:var(--amber)}.mut{color:var(--t3)}
+.metric{display:flex;gap:12px;flex-wrap:wrap;margin:2px 0 4px}
+.mb{flex:1;min-width:132px;background:var(--soft);border:1px solid var(--softbd);border-radius:10px;padding:11px}
+.mb b{font-size:16px;color:var(--pri);display:block;margin:2px 0;font-variant-numeric:tabular-nums}
+.mb span{color:var(--t2);font-size:11.5px;line-height:1.6}
+canvas{width:100%;display:block}
+.legend{font-size:11.5px;color:#555;display:flex;gap:16px;flex-wrap:wrap;margin:8px 2px 0}
+.lg{display:flex;align-items:center;gap:5px}.sw{width:16px;height:3px;display:inline-block;border-radius:2px}
+.foot{font-size:11.5px;color:var(--t3);line-height:1.7;margin-top:12px}
+
+/* 对话 */
+.chat{display:flex;flex-direction:column;gap:14px}
+.msg{display:flex;gap:10px;max-width:88%}
+.msg .av{width:28px;height:28px;border-radius:8px;flex:0 0 28px;display:flex;
+  align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;background:var(--pri)}
+.bub{background:#fff;border:1px solid var(--bd);border-radius:11px;padding:10px 13px;line-height:1.85;
+  box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.msg.me{align-self:flex-end;flex-direction:row-reverse}
+.msg.me .av{background:#8892a0}
+.msg.me .bub{background:var(--pri);border-color:var(--pri);color:#fff}
+.msg.me .bub a,.msg.you .bub a{color:inherit}
+.bub ul{margin:6px 0 2px;padding-left:20px}.bub li{margin:2px 0}
+.tool{border:1px dashed #cfd8e3;background:var(--soft);border-radius:9px;padding:8px 11px;font-size:12px;color:#445}
+.tool summary{cursor:pointer;color:var(--pri);font-weight:600;outline:none}
+.tool pre{margin:8px 0 2px;font-size:11.5px;line-height:1.6;color:#334;white-space:pre-wrap;
+  font-family:SFMono-Regular,Consolas,Menlo,monospace}
+.composer{display:flex;gap:8px;margin-top:14px}
+.composer input{flex:1;font:inherit;font-size:13px;padding:10px 12px;border:1px solid #d7dde5;
+  border-radius:10px;background:#fff;color:var(--t1)}
+.composer input:focus{outline:none;border-color:var(--pri)}
+.composer button{font:inherit;font-size:13px;font-weight:600;padding:10px 20px;border:none;
+  border-radius:10px;background:var(--pri);color:#fff;cursor:pointer}
+.hintline{font-size:11.5px;color:var(--t3);margin-top:8px}
+.pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.pill{font-size:11.5px;padding:5px 10px;border-radius:20px;background:var(--tag);color:var(--pri);cursor:default}
+.art{border-left:3px solid var(--pri);background:var(--soft);border-radius:0 8px 8px 0;
+  padding:10px 13px;line-height:1.9;color:#333}
+.ops{display:flex;gap:12px;flex-wrap:wrap}
+.op{flex:1;min-width:240px;border:1px solid var(--softbd);border-radius:10px;padding:12px;background:#fbfcfe}
+.op h3{margin:0 0 6px;font-size:13px}
+.op p{margin:0;color:var(--t2);font-size:12px;line-height:1.75}
+
+/* 窄屏：宽表（(d) 有 7 列）会把页面撑出横向滚动，改成卡片内部横滚 */
+@media (max-width:560px){
+  .wrap{padding:16px 12px 40px}
+  .card{overflow-x:auto}
+  table{font-size:12px}
+  td,th{padding:6px 8px}
+  .metric{gap:8px}
+  .mb{min-width:120px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">投资助手 3.0<small>单人自用 · 股票 + 股指期货</small></div>
+    <div class="demo">演示原型 · 数据均为假数据</div>
+  </header>
+  <p class="sub">这是形态演示，不是真实功能。三个视图：与助手对话、每日晨报、持仓与回测。视觉沿用你既有分析 HTML 的语言（<span class="mut">#f5f6f8 底 / 白色 12px 圆角卡 / #2f6fd6 主色 / #e0415b 风险红</span>）。</p>
+
+  <div class="tabs">
+    <button class="on" data-v="chat">对话</button>
+    <button data-v="daily">每日晨报</button>
+    <button data-v="port">持仓与回测</button>
+  </div>
+
+  <!-- ======================= 对话 ======================= -->
+  <section class="view on" id="v-chat">
+    <div class="card">
+      <h2>与投资助手对话 <span class="bdg">唯一入口 · 不需要其他</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap">
+        <span style="font-size:12.5px;color:#666">历史对话</span>
+        <select id="sess" style="font:inherit;font-size:12.5px;padding:6px 10px;border:1px solid #d7dde5;border-radius:8px;background:#fff;max-width:520px"></select>
+        <button id="newsess" style="font:inherit;font-size:12.5px;padding:6px 12px;border:1px solid #d7dde5;border-radius:8px;background:#eef2f8;color:#2f6fd6;cursor:pointer">＋ 新对话</button>
+        <span id="sessinfo" style="font-size:11.5px;color:#999"></span>
+      </div>
+      <div class="chat">
+
+        <div class="msg me"><div class="av">我</div><div class="bub">
+          稀土今天跌了 2.4%，跟我持仓有关系吗？为什么跌？
+        </div></div>
+
+        <div class="msg you"><div class="av">助</div><div class="bub">
+          你持仓里有 <b>稀土ETF 159713</b>（占持仓约 8%），所以直接相关。
+          <ul>
+            <li>今日 <b class="red">−2.4%</b>，属于超过 2% 的板块异动。</li>
+            <li><b>可能原因</b>：① 昨日稀土氧化物现货报价回落；② 前期涨幅较大后的获利了结。</li>
+          </ul>
+          以上为<b>可能原因</b>，来源与置信度：现货报价（财联社，置信度<b>中</b>）；获利了结（推断，置信度<b>低</b>）。
+          不构成投资建议。
+        </div></div>
+
+        <div class="msg you"><div class="av">助</div><div class="bub">
+          <details class="tool"><summary>查看过程 · 调用了 2 个能力</summary>
+<pre>fetch_news(板块: 稀土, 日期: 2026-10-10) → 4 条
+get_holdings() → 命中 159713 稀土ETF / 512800 银行ETF / 562500 机器人ETF
+关联判断: 稀土ETF ↔ 稀土板块 → 直接相关</pre>
+          </details>
+        </div></div>
+
+        <div class="msg me"><div class="av">我</div><div class="bub">
+          帮我回测一下：如果 2024 年初开始，只拿沪深300 相关的 IF 不做 IC，收益差多少？
+        </div></div>
+
+        <div class="msg you"><div class="av">助</div><div class="bub">
+          已跑完（策略口径与你既有 IC 回测一致，引擎未改动，结果可复现）。
+          <div class="metric" style="margin-top:10px">
+            <div class="mb"><b>+41.2%</b><span>累计收益（IF 口径）</span></div>
+            <div class="mb"><b>+14.6%</b><span>累计收益（IC 口径）</span></div>
+            <div class="mb"><b class="red">−26.6pt</b><span>收益差</span></div>
+            <div class="mb"><b>−21.3%</b><span>最大回撤（IF 口径）</span></div>
+          </div>
+          <details class="tool"><summary>查看过程 · run_backtest</summary>
+<pre>run_backtest(标的: IF, 区间: 2024-01-01~2026-10-09, 本金: 1000000,
+             手数: 1, 移仓: 当季, 费率: 与 IC 口径一致)
+→ run_id: 6f2c…a91 （可复现）</pre>
+          </details>
+        </div></div>
+
+      </div>
+
+      <div class="composer">
+        <input id="ask" placeholder="问持仓、问行情、问异动原因，或让我跑一次回测…">
+        <button id="send">发送</button>
+      </div>
+      <div class="hintline" id="sysline">正在检查后端…</div>
+      <div class="pills">
+        <span class="pill">我的持仓今天怎么样</span>
+        <span class="pill">光伏为什么涨 2.8%</span>
+        <span class="pill">IC 现在偏离基线多少</span>
+        <span class="pill">帮我回测电池ETF 近三年</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= 日报 ======================= -->
+  <section class="view" id="v-daily">
+    <div class="card" id="repview">
+      <h2>每日晨报 <span class="bdg">真实报告 · 默认最新 · 可切换历史</span></h2>
+      <div style="display:flex;gap:10px;align-items:center;margin:0 0 10px;flex-wrap:wrap">
+        <span style="font-size:12.5px;color:#666">日期</span>
+        <select id="rep" style="font:inherit;font-size:12.5px;padding:6px 10px;border:1px solid #d7dde5;border-radius:8px;background:#fff"></select>
+        <a id="repopen" href="#" target="_blank" rel="noopener" style="font-size:12.5px">在新窗口打开</a>
+        <span id="repinfo" style="font-size:11.5px;color:#999">正在加载…</span>
+      </div>
+      <iframe id="repframe" title="每日晨报" style="width:100%;height:1150px;border:1px solid #e3e6ea;border-radius:10px;background:#fff"></iframe>
+    </div>
+    <div class="card">
+      <h2>投资晨报 <span class="bdg">2026-10-10 周五 · 09:00 自动生成 · 白色系单文件 HTML</span></h2>
+      <div class="metric">
+        <div class="mb"><b>IC 7771</b><span>中证500 · 高于基线 +19.0%（基线 6532）</span></div>
+        <div class="mb"><b>IF 4588</b><span>沪深300 · 高于基线 +12.4%（基线 4082）</span></div>
+        <div class="mb"><b class="red">5 项异动</b><span>|涨跌幅| &gt; 2% 的板块数</span></div>
+        <div class="mb"><b class="pos">数据正常</b><span>四维自检通过</span></div>
+      </div>
+    </div>
+
+    <!-- a 猫笔刀 -->
+    <div class="card">
+      <h2>a · 猫笔刀文章 <span class="tag n">原文原样</span><span class="bdg">2026-10-10 11:30 抓取 · 已本地存档</span></h2>
+      <div class="art">
+        <b>（演示占位）文章标题示例</b><br>
+        这里是当日抓取的「猫笔刀」最新一篇的<b>正文原文</b>，原样呈现、不摘要不改写。
+        全文会完整落在这里，同时本地留档一份，原文被删也能回看。
+      </div>
+      <p class="foot">原文链接：mp.weixin.qq.com/… · 抓取时间 11:30 · 已按「日期+标题哈希」去重</p>
+    </div>
+
+    <!-- b 要闻与异动 -->
+    <div class="card">
+      <h2>b · 当日重要信息与异动 <span class="tag r">板块涨跌幅 &gt; 2%</span></h2>
+      <canvas id="cv-move" height="230"></canvas>
+      <div class="legend">
+        <span class="lg"><span class="sw" style="background:var(--risk)"></span>上涨</span>
+        <span class="lg"><span class="sw" style="background:var(--pos)"></span>下跌</span>
+        <span class="lg"><span class="sw" style="border-top:2px dashed var(--axis);height:0"></span>±2% 异动线</span>
+      </div>
+      <h2 style="margin-top:16px">要闻</h2>
+      <table>
+        <tr><th style="width:64px">时间</th><th>信息</th><th style="width:110px">来源</th><th style="width:96px">与持仓关系</th></tr>
+        <tr><td>09:12</td><td>工信部就稀土开采总量控制指标征求意见</td><td>东方财富</td><td><span class="tag r">相关 · 159713</span></td></tr>
+        <tr><td>10:38</td><td>某海外云厂商上调明年资本开支指引</td><td>同花顺</td><td><span class="tag r">相关 · 515880</span></td></tr>
+        <tr><td>11:05</td><td>光伏组件价格连续第三周环比回升</td><td>东方财富</td><td><span class="tag r">相关 · 159857</span></td></tr>
+        <tr><td>13:40</td><td>央行公开市场净投放 3000 亿元</td><td>同花顺</td><td><span class="tag n">无直接关系</span></td></tr>
+      </table>
+    </div>
+
+    <!-- c 机会 -->
+    <div class="card">
+      <h2>c · 行业机会与值得关注 <span class="tag a">含来源与置信度 · 不构成投资建议</span></h2>
+      <div class="ops">
+        <div class="op"><h3>通信（光模块方向）<span class="tag g" style="margin-left:6px">置信度 中</span></h3>
+          <p>海外云厂商资本开支上修，与 515880 重仓的光模块链直接相关；今日 +4.2%。</p>
+          <p class="foot">来源：同花顺 · 你的关注清单命中</p></div>
+        <div class="op"><h3>光伏 <span class="tag a" style="margin-left:6px">置信度 低</span></h3>
+          <p>组件价格环比回升，但持续性未证实；今日 +2.8%。</p>
+          <p class="foot">来源：东方财富 · 仅价格数据，无需求侧证据</p></div>
+        <div class="op"><h3>稀土 <span class="tag r" style="margin-left:6px">风险提示</span></h3>
+          <p>总量控制指标征求意见，方向未定；今日 −2.4%，你持仓 8%，建议留意。</p>
+          <p class="foot">来源：东方财富 · 政策类事项存在方向不确定性</p></div>
+      </div>
+    </div>
+
+    <!-- d 基线偏离 -->
+    <div class="card">
+      <h2>d · 当前点位、基线与贝塔 <span class="bdg">ETF 基线 + 指数基线 · 贝塔以中证500 为基准</span></h2>
+      <table>
+        <tr><th>标的</th><th class="num">当前</th><th class="num">基线值</th><th class="num">偏离</th>
+            <th class="num">基线斜率</th><th class="num">R²</th><th class="num">贝塔</th></tr>
+        <tr><td>IC · 中证500</td><td class="num">7771</td><td class="num">6532</td><td class="num red">+19.0%</td><td class="num">+73/年</td><td class="num mut">0.06</td><td class="num mut">—</td></tr>
+        <tr><td>IF · 沪深300</td><td class="num">4588</td><td class="num">4082</td><td class="num red">+12.4%</td><td class="num">+54/年</td><td class="num mut">0.14</td><td class="num mut">—</td></tr>
+        <tr><td>512800 银行ETF</td><td class="num">1.482</td><td class="num">1.395</td><td class="num red">+6.2%</td><td class="num">+0.041/年</td><td class="num mut">0.71</td><td class="num">0.27</td></tr>
+        <tr><td>512880 券商ETF</td><td class="num">1.126</td><td class="num">1.204</td><td class="num green">−6.5%</td><td class="num">+0.033/年</td><td class="num mut">0.35</td><td class="num">0.94</td></tr>
+        <tr><td>159996 家电ETF</td><td class="num">1.394</td><td class="num">1.318</td><td class="num red">+5.8%</td><td class="num">+0.052/年</td><td class="num mut">0.64</td><td class="num">0.70</td></tr>
+        <tr><td>159857 光伏ETF</td><td class="num">0.862</td><td class="num">0.941</td><td class="num green">−8.4%</td><td class="num">+0.018/年</td><td class="num mut">0.12</td><td class="num">1.10</td></tr>
+        <tr><td>159713 稀土ETF</td><td class="num">1.204</td><td class="num">1.098</td><td class="num red">+9.7%</td><td class="num">+0.036/年</td><td class="num mut">0.41</td><td class="num">1.15</td></tr>
+        <tr><td>562500 机器人ETF</td><td class="num">1.532</td><td class="num">1.226</td><td class="num red">+25.0%</td><td class="num">+0.070/年</td><td class="num mut">0.58</td><td class="num">1.10</td></tr>
+        <tr><td>515880 通信ETF</td><td class="num">1.884</td><td class="num">1.412</td><td class="num red">+33.4%</td><td class="num">+0.062/年</td><td class="num mut">0.49</td><td class="num">1.19</td></tr>
+        <tr><td>159755 电池ETF</td><td class="num">0.736</td><td class="num">0.812</td><td class="num green">−9.4%</td><td class="num">+0.021/年</td><td class="num mut">0.19</td><td class="num">1.10</td></tr>
+      </table>
+      <p class="foot"><b>读法：</b>偏离只说明当前点位相对该标的自有基线的位置；<b>R² 一起看</b>——中证500 的 R²≈0.06 表示这条线几乎没有解释力，偏离大不代表必然回落。<b>贝塔</b>为全历史日频、相对中证500（只有 ETF 出，IC/IF 不出）。三者都只是参考维度，不构成投资建议。</p>
+    </div>
+
+    <!-- d-2 指数口径基线 -->
+    <div class="card">
+      <h2>d2 · 指数口径基线 <span class="bdg">长历史对照 · ETF 基线答「这只贵不贵」，指数基线答「这个板块贵不贵」</span></h2>
+      <table>
+        <tr><th>板块指数</th><th class="num">当前</th><th class="num">基线值</th><th class="num">偏离</th>
+            <th class="num">基线斜率</th><th class="num">R²</th><th class="num">起点</th></tr>
+        <tr><td>中证银行 399986</td><td class="num">2841</td><td class="num">2628</td><td class="num red">+8.1%</td><td class="num">+13.4/年</td><td class="num mut">0.42</td><td class="num mut">2005-01</td></tr>
+        <tr><td>中证全指证券公司 399975</td><td class="num">942</td><td class="num">1015</td><td class="num green">−7.2%</td><td class="num">+7.1/年</td><td class="num mut">0.18</td><td class="num mut">2007-07</td></tr>
+        <tr><td>中证全指家用电器 930697</td><td class="num">9120</td><td class="num">8694</td><td class="num red">+4.9%</td><td class="num">+62.5/年</td><td class="num mut">0.66</td><td class="num mut">2005-01</td></tr>
+        <tr><td>中证光伏产业 931151</td><td class="num">2284</td><td class="num">2527</td><td class="num green">−9.6%</td><td class="num">+6.0/年</td><td class="num mut">0.11</td><td class="num mut">2012-12</td></tr>
+        <tr><td>中证稀土产业 930632</td><td class="num">3176</td><td class="num">2856</td><td class="num red">+11.2%</td><td class="num">+54.1/年</td><td class="num mut">0.39</td><td class="num mut">2012-01</td></tr>
+        <tr><td>中证机器人指数 H30590</td><td class="num">4462</td><td class="num">3502</td><td class="num red">+27.4%</td><td class="num">+112.3/年</td><td class="num mut">0.55</td><td class="num mut">2011-01</td></tr>
+        <tr><td>中证全指通信设备 931160</td><td class="num">3025</td><td class="num">2227</td><td class="num red">+35.8%</td><td class="num">+34.2/年</td><td class="num mut">0.47</td><td class="num mut">2018-12</td></tr>
+        <tr><td>国证新能源车电池 980032</td><td class="num">1088</td><td class="num">1213</td><td class="num green">−10.3%</td><td class="num">+18.8/年</td><td class="num mut">0.16</td><td class="num mut">2013-01</td></tr>
+      </table>
+      <p class="foot">指数只做「板块贵不贵」的标尺：指数历史比 ETF 长得多（2005–2013 起），且不含分红缺口，拟合比 ETF 基线稳。指数起点为该指数的实际首个数据日（已剔除中证接口的 base-date 合成首行）。</p>
+    </div>
+  </section>
+
+  <!-- ======================= 持仓与回测 ======================= -->
+  <section class="view" id="v-port">
+    <div class="card">
+      <h2>我的持仓 <span class="bdg">手工录入 · 落地本地 · 随时可改</span></h2>
+      <table>
+        <tr><th>标的</th><th>类型</th><th class="num">数量/手数</th><th class="num">成本价</th><th>开仓日</th><th class="num">占比</th><th>备注</th></tr>
+        <tr><td>159713 稀土ETF</td><td>ETF</td><td class="num">60,000</td><td class="num">1.041</td><td>2026-03-12</td><td class="num">8.0%</td><td>分批建仓</td></tr>
+        <tr><td>512800 银行ETF</td><td>ETF</td><td class="num">80,000</td><td class="num">1.352</td><td>2025-11-06</td><td class="num">13.2%</td><td>—</td></tr>
+        <tr><td>562500 机器人ETF</td><td>ETF</td><td class="num">50,000</td><td class="num">1.188</td><td>2026-01-20</td><td class="num">8.5%</td><td>—</td></tr>
+        <tr><td>IC2603</td><td>期指</td><td class="num">1 手</td><td class="num">7465.6</td><td>2026-07-18</td><td class="num">—</td><td>当季，贴水建仓</td></tr>
+        <tr><td>IF2512</td><td>期指</td><td class="num">1 手</td><td class="num">4410.2</td><td>2026-09-04</td><td class="num">—</td><td>当季</td></tr>
+      </table>
+      <h2 style="margin-top:16px">投资偏好</h2>
+      <div class="ops">
+        <div class="op"><h3>目标</h3><p>求稳，稳定拿到 <b>5%+</b>；后续可能追 7%。接受适度回撤，希望长期盈利。</p></div>
+        <div class="op"><h3>配置意向</h3><p>20% 黄金 + 美金 QDII ｜ 30% 高分红股票（美的、银行等） ｜ 50% 股指期货，1.5 倍杠杆吃贴水。</p></div>
+        <div class="op"><h3>数据缺口</h3><p>黄金、美金 QDII、高分红个股都不在数据清单内（个股已定为不做），偏好里记录但不进数据链路。</p></div>
+      </div>
+      <p class="foot">落盘在 <code>assistant/config/preferences.yaml</code>，随时可改；日报 (c) 块按此筛选。</p>
+    </div>
+
+    <div class="card">
+      <h2>回测 · 对话或日报调用 <span class="tag">icbt 引擎 · 未改内核 · 结果可复现</span></h2>
+      <div class="metric">
+        <div class="mb"><b class="pos">+92.8%</b><span>累计收益</span></div>
+        <div class="mb"><b>+5.93%</b><span>年化</span></div>
+        <div class="mb"><b class="red">−36.9%</b><span>最大回撤</span></div>
+        <div class="mb"><b>0.40</b><span>夏普</span></div>
+        <div class="mb"><b>46</b><span>交易笔数</span></div>
+        <div class="mb"><b>+41.2万</b><span>基差贡献</span></div>
+      </div>
+      <canvas id="cv-eq" height="300"></canvas>
+      <div class="legend">
+        <span class="lg"><span class="sw" style="background:var(--pri)"></span>策略净值（起点=100%）</span>
+        <span class="lg"><span class="sw" style="background:var(--axis)"></span>中证500 同期</span>
+      </div>
+      <p class="foot">策略：季度滚动 + 贴水择时（与既有 IC 回测同口径）。本金 100 万、1 手、IC 乘数 200。</p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* ---------- 标签切换 ---------- */
+const tabs=[...document.querySelectorAll('.tabs button')];
+tabs.forEach(b=>b.addEventListener('click',()=>{
+  tabs.forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  document.getElementById('v-'+b.dataset.v).classList.add('on');
+  drawAll();
+}));
+
+/* ---------- canvas 基础设施 ---------- */
+function setup(cv,h){
+  const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  const W=r.width; cv.width=W*dpr; cv.height=h*dpr;
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  cv.style.height=h+'px';
+  return {ctx,W,H:h};
+}
+
+/* ---------- b 板块异动（横向条） ---------- */
+function drawMove(){
+  const cv=document.getElementById('cv-move'); if(!cv) return;
+  const {ctx,W,H}=setup(cv,230);
+  const data=[
+    ['通信 · 光模块', 4.2],['机器人', 3.6],['光伏', 2.8],['券商', 2.1],
+    ['家电', 0.4],['银行', -1.2],['电池', -2.0],['稀土', -2.4]
+  ];
+  const padT=8,padB=22,padL=92,padR=48;
+  const max=5, half=(W-padL-padR)/2, zero=padL+half;
+  const rowH=(H-padT-padB)/data.length;
+  ctx.font='11.5px -apple-system'; ctx.textBaseline='middle';
+  data.forEach(([name,v],i)=>{
+    const y=padT+rowH*i+rowH/2;
+    ctx.fillStyle='#666'; ctx.textAlign='right'; ctx.fillText(name,padL-8,y);
+    const w=Math.abs(v)/max*half;
+    ctx.globalAlpha=.85;
+    ctx.fillStyle = v>=0 ? '#e0415b' : '#2ca02c';
+    if(v>=0) ctx.fillRect(zero,y-7,w,14); else ctx.fillRect(zero-w,y-7,w,14);
+    ctx.globalAlpha=1;
+    const label=(v>0?'+':'')+v.toFixed(1)+'%';
+    ctx.fillStyle = v>=0 ? '#e0415b' : '#2ca02c';
+    if(v>=0){ ctx.textAlign='left'; ctx.fillText(label, zero+w+6, y); }
+    else { ctx.textAlign='right'; ctx.fillText(label, zero-w-6, y); }
+  });
+  // ±2% 异动线
+  ctx.setLineDash([4,3]); ctx.strokeStyle='#9aa5b1'; ctx.lineWidth=1;
+  [2,-2].forEach(v=>{
+    const x=zero + (v/max)*((W-padL-padR)/2);
+    ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,H-padB); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle='#9aa5b1'; ctx.textAlign='center'; ctx.font='10px -apple-system';
+    ctx.fillText((v>0?'+':'')+v+'%', x, H-padB+10); ctx.setLineDash([4,3]);
+  });
+  ctx.setLineDash([]);
+  // 零线
+  ctx.strokeStyle='#cfd6de'; ctx.beginPath(); ctx.moveTo(zero,padT); ctx.lineTo(zero,H-padB); ctx.stroke();
+}
+
+/* ---------- 资金曲线 ---------- */
+function drawEq(){
+  const cv=document.getElementById('cv-eq'); if(!cv) return;
+  const {ctx,W,H}=setup(cv,300);
+  const padL=54,padR=16,padT=14,padB=30;
+  const yrs=['2015','2016','2017','2018','2019','2020','2021','2022','2023','2024','2025','2026'];
+  const eq=[100,104,118,96,102,126,141,108,121,138,168,192.8];
+  const bm=[100,112,101,80,96,113,131,96,101,113,132,155];
+  const lo=60,hi=205;
+  const xs=i=>padL+i*(W-padL-padR)/(yrs.length-1);
+  const yv=v=>padT+(1-(v-lo)/(hi-lo))*(H-padT-padB);
+  ctx.font='10.5px -apple-system'; ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.fillStyle='#8a8f98';
+  for(const m of [60,90,120,150,180]){const y=yv(m);ctx.strokeStyle='#eceff2';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();ctx.fillText(m+'%',padL-6,y);}
+  function path(arr,color,wd){
+    ctx.strokeStyle=color; ctx.lineWidth=wd; ctx.beginPath();
+    arr.forEach((v,i)=>{const x=xs(i),y=yv(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y);}); ctx.stroke();
+  }
+  path(bm,'#9aa5b1',1.6); path(eq,'#2f6fd6',2.4);
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#8a8f98';
+  yrs.forEach((y,i)=>{ if(i%2===0) ctx.fillText(y,xs(i),H-padB+6); });
+}
+
+function drawAll(){ drawMove(); drawEq(); }
+window.addEventListener("resize",drawAll);
+drawAll();
+
+/* ---------- 接后端（server.mjs） ---------- */
+var API = location.origin;
+function el(id){ return document.getElementById(id); }
+function bubble(role, text){
+  var wrap=document.createElement('div'); wrap.className='msg '+(role==='me'?'me':'you');
+  var av=document.createElement('div'); av.className='av'; av.textContent=(role==='me'?'我':'助');
+  var b=document.createElement('div'); b.className='bub'; b.style.whiteSpace='pre-wrap'; b.textContent=text;
+  wrap.appendChild(av); wrap.appendChild(b);
+  document.querySelector('#v-chat .chat').appendChild(wrap);
+  wrap.scrollIntoView({block:'nearest'});
+  return b;
+}
+async function refreshStatus(){
+  try{
+    var r=await fetch(API+'/api/status'); var d=await r.json();
+    var s=d.data;
+    el('sysline').textContent='已接后端 · 行情标的 '+s.series_instruments+' 个（'+s.series_rows+' 行）· 对话 '+s.messages+' 条 · 回测 '+s.runs+' 次 · 报告 '+s.reports+' 份';
+  }catch(e){ el('sysline').textContent='未接到后端：请先跑 node assistant/src/server.mjs'; }
+}
+async function send(){
+  var input=el('ask'); var t=input.value.trim(); if(!t) return;
+  input.value=''; bubble('me', t);
+  var b=bubble('you','思考中…（会真实调用工具取数，通常 20–60 秒）');
+  el('send').disabled=true;
+  try{
+    var r=await fetch(API+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Session-Id':curSess()},body:JSON.stringify({message:t})});
+    var d=await r.json();
+    b.textContent = d.ok ? d.reply : ('出错了：'+(d.stderr||d.error||'未知'));
+    b.style.color = d.ok ? '' : '#e0415b';
+  }catch(e){ b.textContent='请求失败：'+e; b.style.color='#e0415b'; }
+  el('send').disabled=false; refreshStatus(); loadSessions();
+}
+el('send').addEventListener('click', send);
+el('ask').addEventListener('keydown', function(e){ if(e.key==='Enter') send(); });
+document.querySelectorAll('.pill').forEach(function(p){
+  p.style.cursor='pointer';
+  p.addEventListener('click', function(){ el('ask').value=p.textContent.trim(); send(); });
+});
+
+/* ---------- 历史对话：切换 / 新建 ---------- */
+var SESS_KEY='assistant_session';
+function curSess(){ return localStorage.getItem(SESS_KEY)||''; }
+function setSess(s){ localStorage.setItem(SESS_KEY,s); }
+async function loadSessions(){
+  try{
+    var r=await fetch(API+'/api/sessions'); var d=await r.json();
+    var list=(d.data&&d.data.sessions)||[];
+    var sel=el('sess'); sel.innerHTML='';
+    list.forEach(function(s){
+      var o=document.createElement('option'); o.value=s.session_id;
+      o.textContent=(s.last||'').slice(0,16).replace('T',' ')+' · '+s.count+' 条 · '+(s.preview||'');
+      sel.appendChild(o);
+    });
+    var cur=curSess();
+    // 先解析出有效 cur，**再**判断它是否已在列表里 —— 顺序反了会出现两个相同 value 的选项
+    if(!cur || !list.some(function(s){return s.session_id===cur;})){
+      cur = list.length ? list[0].session_id : ('h5-'+Date.now());
+      setSess(cur);
+    }
+    if(!list.some(function(s){return s.session_id===cur;})){
+      var o2=document.createElement('option'); o2.value=cur;
+      o2.textContent='（新对话，尚无消息）'; sel.appendChild(o2);
+    }
+    sel.value=cur;
+    el('sessinfo').textContent=list.length?('共 '+list.length+' 个历史对话'):'还没有历史对话';
+    return cur;
+  }catch(e){ el('sessinfo').textContent='读会话失败：'+e; return curSess()||('h5-'+Date.now()); }
+}
+async function loadMessages(sid){
+  var box=document.querySelector('#v-chat .chat'); box.innerHTML='';
+  try{
+    var r=await fetch(API+'/api/messages?session='+encodeURIComponent(sid)); var d=await r.json();
+    var msgs=(d.data&&d.data.messages)||[];
+    if(!msgs.length){ bubble('you','这是一个新对话。直接问我就行，比如「IC 现在偏离基线多少」。'); return; }
+    msgs.forEach(function(m){
+      if(m.role==='user') bubble('me', m.content||'');
+      else if(m.role==='assistant' && (m.content||'').trim()) bubble('you', m.content);
+    });
+  }catch(e){}
+}
+el('sess').addEventListener('change', async function(){
+  setSess(el('sess').value); await loadMessages(el('sess').value);
+});
+el('newsess').addEventListener('click', async function(){
+  var id='h5-'+Date.now(); setSess(id);
+  await loadSessions(); el('sess').value=id;
+  await loadMessages(id); el('ask').focus();
+});
+(async function init(){
+  refreshStatus();
+  var cur=await loadSessions();
+  await loadMessages(cur);
+  await loadReports();
+})();
+
+/* ---------- 每日晨报：默认最新，可切换（下面是静态演示卡，已隐藏） ---------- */
+function showReport(date){
+  var src=API+'/reports/'+encodeURIComponent(date)+'.html';
+  el('repframe').src=src; el('repopen').href=src;
+}
+async function loadReports(){
+  try{
+    var r=await fetch(API+'/api/reports'); var d=await r.json();
+    var list=((d.data&&d.data.reports)||[]).filter(function(x){return x.kind==='daily';});
+    var sel=el('rep'); sel.innerHTML='';
+    if(!list.length){ el('repinfo').textContent='还没有生成过晨报'; return; }
+    list.forEach(function(x){
+      var o=document.createElement('option'); o.value=x.report_date;
+      o.textContent=x.report_date+(x.html_bytes?('（'+(x.html_bytes/1024).toFixed(0)+'KB）'):'');
+      sel.appendChild(o);
+    });
+    // 默认展示**最新**的一份（store 已按日期倒序返回）
+    sel.value=list[0].report_date;
+    showReport(list[0].report_date);
+    el('repinfo').textContent='共 '+list.length+' 份晨报';
+    // 隐藏原来的静态演示卡片，避免和真报告混淆
+    document.querySelectorAll('#v-daily > .card').forEach(function(c){
+      if(c.id!=='repview') c.style.display='none';
+    });
+  }catch(e){ el('repinfo').textContent='读晨报列表失败：'+e; }
+}
+el('rep').addEventListener('change', function(){ showReport(el('rep').value); });
+</script>
+</body>
+</html>
