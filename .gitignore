@@ -59,6 +59,3 @@ assistant/data/logs/
 assistant/data/reports/
 assistant/docs/PRD-投资助手3.0-v1.0.md
 assistant/docs/PRD-投资助手3.0-v1.0.html
-
-# Pi 上游 CI，本副本用不到，且推送需要 workflow 权限
-.github/workflows/
